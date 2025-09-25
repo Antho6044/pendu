@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jeu du Pendu (JavaScript)</title>
+  <style>
+    /* ====== Styles de base ====== */
+    :root{
+      --bg: #0f172a;          /* bleu nuit */
+      --card:#111827;         /* gris très foncé */
+      --ink:#e5e7eb;          /* texte principal */
+      --muted:#9ca3af;        /* texte secondaire */
+      --accent:#22d3ee;       /* cyan */
+      --danger:#ef4444;       /* rouge */
+      --ok:#10b981;           /* vert */
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      background: radial-gradient(1000px 600px at 50% -100px, #1f2937 10%, var(--bg));
+      color:var(--ink);
+      display:flex; min-height:100svh; align-items:center; justify-content:center;
+    }
+    .app{
+      width:min(980px, 96vw);
+      display:grid; gap:16px; padding:24px; margin:24px;
+      grid-template-columns: 1fr 1fr; 
+      background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border:1px solid rgba(255,255,255,0.08);
+      border-radius:20px; backdrop-filter: blur(8px);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+    }
+    header{grid-column:1 / -1; display:flex; gap:12px; align-items:center; justify-content:space-between}
+    h1{font-size:clamp(20px, 2.4vw, 32px); margin:0; letter-spacing:.5px}
+    .controls{display:flex; gap:8px; flex-wrap:wrap}
+    button{
+      border:1px solid rgba(255,255,255,0.12); background:#0b1220; color:var(--ink);
+      padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:600;
+      transition:.2s transform ease, .2s background ease, .2s opacity ease;
+    }
+    button:hover{ transform: translateY(-1px); background:#0e1628 }
+    button:disabled{ opacity:.4; cursor:not-allowed }
+
+    /* Zone gauche : dessin + infos */
+    .left{ background:var(--card); border-radius:16px; padding:18px; border:1px solid rgba(255,255,255,.06);}
+    .meta{ display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:8px}
+    .badge{ font-size:12px; color:var(--muted); background:#0b1220; padding:6px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.08)}
+    .tries{ font-weight:700; letter-spacing:.3px }
+
+    /* Dessin du pendu (SVG) */
+    .gallows{ width:100%; aspect-ratio: 4 / 3; display:block; margin:auto }
+    .gallows line, .gallows circle{ stroke:#cbd5e1; stroke-width:6; stroke-linecap:round }
+    .gallows .piece{ opacity:.08 }
+    .gallows .piece.visible{ opacity:1; transition:.25s ease }
+
+    /* Zone droite : mot + clavier */
+    .right{ display:flex; flex-direction:column; gap:14px }
+    .word{ display:flex; flex-wrap:wrap; gap:10px; padding:18px; background:var(--card); border-radius:16px; border:1px solid rgba(255,255,255,.06)}
+    .slot{ width:40px; height:56px; border-bottom:3px solid #334155; display:grid; place-items:center; font-size:28px; font-weight:700; text-transform:uppercase }
+    .slot.revealed{ color:var(--ok) }
+    .misses{ min-height:38px; color:var(--danger); letter-spacing:.5px }
+    .keyboard{ display:grid; grid-template-columns: repeat(10, 1fr); gap:8px }
+    .key{ padding:10px 0; background:#0b1220; border:1px solid rgba(255,255,255,.08); border-radius:10px; cursor:pointer; font-weight:700; }
+    .key.used{ opacity:.35 }
+
+    /* Modale de fin */
+    dialog{ border:none; border-radius:16px; padding:0; background:transparent }
+    .modal{ background:var(--card); padding:20px; border-radius:16px; border:1px solid rgba(255,255,255,.10); width:min(420px, 92vw); box-shadow:0 30px 80px rgba(0,0,0,.55)}
+    .modal h2{ margin:.2rem 0 0 0 }
+    .modal p{ color:var(--muted); margin:.2rem 0 1rem 0 }
+    .row{ display:flex; gap:8px; flex-wrap:wrap }
+    .highlight{ color:var(--accent); font-weight:800 }
+
+    /* Petits écrans : empilement */
+    @media (max-width: 840px){ .app{ grid-template-columns: 1fr } }
+  </style>
+</head>
+<body>
+  <main class="app" role="application" aria-label="Jeu du pendu">
+    <header>
+      <h1>🎯 Jeu du Pendu – JavaScript</h1>
+      <div class="controls">
+        <button id="btn-new" title="Nouveau mot (raccourci: N)">🔄 Nouveau mot</button>
+        <button id="btn-hint" title="Révéler une lettre (coûte 1 essai)">💡 Indice</button>
+      </div>
+    </header>
+
+    <!-- Colonne gauche : infos + dessin du pendu -->
+    <section class="left" aria-live="polite">
+      <div class="meta">
+        <span class="badge">Essais restants : <span id="tries" class="tries">6</span></span>
+        <span class="badge">Catégorie : <span id="category">général</span></span>
+      </div>
+
+      <!-- SVG du pendu : on rend visibles les pièces au fil des erreurs -->
+      <svg class="gallows" viewBox="0 0 400 300" aria-hidden="true">
+        <!-- sol + portique -->
+        <line x1="10" y1="290" x2="390" y2="290" />
+        <line x1="60" y1="290" x2="60" y2="30" />
+        <line x1="60" y1="30" x2="230" y2="30" />
+        <line x1="230" y1="30" x2="230" y2="70" />
+        <!-- pièces qui apparaissent -->
+        <circle class="piece" id="p1" cx="230" cy="100" r="28" /> <!-- tête -->
+        <line class="piece" id="p2" x1="230" y1="128" x2="230" y2="190" /> <!-- tronc -->
+        <line class="piece" id="p3" x1="230" y1="145" x2="205" y2="170" /> <!-- bras gauche -->
+        <line class="piece" id="p4" x1="230" y1="145" x2="255" y2="170" /> <!-- bras droit -->
+        <line class="piece" id="p5" x1="230" y1="190" x2="210" y2="235" /> <!-- jambe gauche -->
+        <line class="piece" id="p6" x1="230" y1="190" x2="250" y2="235" /> <!-- jambe droite -->
+      </svg>
+
+      <div class="misses" id="misses" aria-live="polite"></div>
+    </section>
+
+    <!-- Colonne droite : mot + clavier -->
+    <section class="right">
+      <div class="word" id="word" aria-label="Mot à deviner (tirets pour lettres)"></div>
+      <div class="keyboard" id="keyboard" aria-label="Clavier virtuel"></div>
+      <small style="color:var(--muted)">Astuce : vous pouvez aussi taper directement au clavier. Raccourcis : <b>N</b> nouveau mot, <b>H</b> indice.</small>
+    </section>
+  </main>
+
+  <!-- Modale fin de partie -->
+  <dialog id="end">
+    <div class="modal">
+      <h2 id="end-title">Bravo !</h2>
+      <p id="end-text"></p>
+      <div class="row">
+        <button id="again">🔁 Rejouer</button>
+        <button id="close">✖️ Fermer</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    // =============================
+    //  Jeu du Pendu – Vanilla JS
+    // =============================
+    // Objectif : code simple, lisible et commenté pour apprendre.
+
+    // 1) Banque de mots (français, sans accents pour simplicité) + catégories
+    const WORD_BANK = {
+      animaux: ["lion","girafe","souris","chien","chat","cheval","requin","panda","koala","aigle"],
+      pays: ["france","espagne","belgique","italie","portugal","brazil","canada","maroc","japon","allemagne"],
+      objets: ["ordinateur","clavier","ecran","cahier","telephone","bouteille","lampe","chaise","voiture","velo"],
+      sport: ["football","tennis","natation","basket","handball","cyclisme","boxe","rugby","kayak","escrime"],
+      general: ["javascript","developpeur","formation","puzzle","musique","astronomie","montagne","rivière","chateau","pendu"].map(w=>w.normalize("NFD").replace(/\p{Diacritic}/gu,""))
+    };
+
+    // 2) Etat du jeu
+    const state = {
+      word:"",
+      category:"general",
+      found:new Set(),
+      used:new Set(),
+      tries:6,
+      maxTries:6,
+    };
+
+    // 3) Raccourcis vers le DOM
+    const $ = sel => document.querySelector(sel);
+    const wordEl = $('#word');
+    const kbEl = $('#keyboard');
+    const triesEl = $('#tries');
+    const catEl = $('#category');
+    const missesEl = $('#misses');
+    const endDlg = $('#end');
+    const endTitle = $('#end-title');
+    const endText = $('#end-text');
+
+    // 4) Création du clavier virtuel A-Z
+    const LETTERS = Array.from({length:26}, (_,i)=> String.fromCharCode(97+i)); // a..z
+    function buildKeyboard(){
+      kbEl.innerHTML = '';
+      LETTERS.forEach(l=>{
+        const b = document.createElement('button');
+        b.className = 'key';
+        b.textContent = l.toUpperCase();
+        b.dataset.letter = l;
+        b.addEventListener('click', ()=> handleGuess(l));
+        kbEl.appendChild(b);
+      });
+    }
+
+    // 5) Choisir un mot au hasard
+    function pickWord(){
+      const cats = Object.keys(WORD_BANK);
+      state.category = cats[Math.floor(Math.random()*cats.length)];
+      const list = WORD_BANK[state.category];
+      state.word = list[Math.floor(Math.random()*list.length)].toLowerCase()
+        .normalize("NFD").replace(/\p{Diacritic}/gu,"");
+      state.found.clear();
+      state.used.clear();
+      state.maxTries = 6;
+      state.tries = state.maxTries;
+      triesEl.textContent = state.tries;
+      catEl.textContent = state.category;
+      renderWord();
+      renderKeyboard();
+      renderGallows();
+      missesEl.textContent = "";
+    }
+
+    // 6) Afficher le mot avec des tirets
+    function renderWord(){
+      wordEl.innerHTML = '';
+      for(const ch of state.word){
+        const span = document.createElement('span');
+        span.className = 'slot';
+        if(ch === '-' || ch === ' '){
+          span.style.borderBottomColor = 'transparent';
+          span.textContent = ch === '-' ? '-' : '·';
+        } else if(state.found.has(ch)){
+          span.textContent = ch.toUpperCase();
+          span.classList.add('revealed');
+        } else {
+          span.textContent = '';
+        }
+        wordEl.appendChild(span);
+      }
+    }
+
+    // 7) Mettre à jour l'état visuel du clavier
+    function renderKeyboard(){
+      kbEl.querySelectorAll('.key').forEach(k=>{
+        const l = k.dataset.letter;
+        k.classList.toggle('used', state.used.has(l));
+        k.disabled = state.used.has(l) || isFinished();
+      });
+    }
+
+    // 8) Dessiner le pendu selon le nombre d'erreurs
+    function renderGallows(){
+      const errors = state.maxTries - state.tries; // 0..6
+      for(let i=1;i<=6;i++){
+        const piece = document.getElementById('p'+i);
+        if(piece) piece.classList.toggle('visible', i <= errors);
+      }
+    }
+
+    // 9) Gestion d'une proposition de lettre
+    function handleGuess(letter){
+      if(isFinished()) return;
+      if(!/^[a-z]$/.test(letter)) return; // ignore tout sauf a..z
+      if(state.used.has(letter)) return;
+
+      state.used.add(letter);
+
+      if(state.word.includes(letter)){
+        // Ajoute toutes les occurrences trouvées
+        for(const ch of new Set(state.word.split(''))){
+          if(ch === letter) state.found.add(ch);
+        }
+      } else {
+        state.tries = Math.max(0, state.tries - 1);
+        triesEl.textContent = state.tries;
+        missesEl.textContent = `Lettres fausses: ${[...state.used].filter(l=>!state.word.includes(l)).join(' ').toUpperCase()}`;
+        renderGallows();
+      }
+
+      renderWord();
+      renderKeyboard();
+      checkEnd();
+    }
+
+    // 10) Révéler un indice (consomme 1 essai)
+    function revealHint(){
+      if(isFinished() || state.tries === 0) return;
+      const hidden = [...new Set(state.word.split(''))].filter(ch=>/^[a-z]$/.test(ch) && !state.found.has(ch));
+      if(hidden.length === 0) return;
+      const pick = hidden[Math.floor(Math.random()*hidden.length)];
+      state.found.add(pick);
+      state.used.add(pick);
+      state.tries = Math.max(0, state.tries - 1);
+      triesEl.textContent = state.tries;
+      renderWord();
+      renderKeyboard();
+      renderGallows();
+      checkEnd();
+    }
+
+    // 11) Vérifier fin de partie
+    function isFinished(){
+      // gagné si toutes les lettres (uniques) du mot sont trouvées
+      const uniqLetters = new Set(state.word.split('').filter(ch=>/^[a-z]$/.test(ch)));
+      const won = [...uniqLetters].every(l => state.found.has(l));
+      const lost = state.tries === 0;
+      return won || lost;
+    }
+
+    function checkEnd(){
+      const uniqLetters = new Set(state.word.split('').filter(ch=>/^[a-z]$/.test(ch)));
+      const won = [...uniqLetters].every(l => state.found.has(l));
+      const lost = state.tries === 0;
+
+      if(won){
+        endTitle.textContent = '🎉 Bravo !';
+        endText.innerHTML = `Vous avez deviné le mot <span class="highlight">${state.word.toUpperCase()}</span> avec ${state.tries} essai(s) restant(s).`;
+        endDlg.showModal();
+      }else if(lost){
+        endTitle.textContent = '💀 Perdu...';
+        endText.innerHTML = `Le mot était <span class="highlight">${state.word.toUpperCase()}</span>. Réessayez !`;
+        endDlg.showModal();
+      }
+    }
+
+    // 12) Nouveau mot
+    function newGame(){ pickWord(); }
+
+    // 13) Écoute clavier physique
+    window.addEventListener('keydown', (e)=>{
+      const key = e.key.toLowerCase();
+      if(key === 'n') return newGame();
+      if(key === 'h') return revealHint();
+      if(/^[a-z]$/.test(key)) handleGuess(key);
+    });
+
+    // 14) Boutons
+    document.getElementById('btn-new').addEventListener('click', newGame);
+    document.getElementById('btn-hint').addEventListener('click', revealHint);
+    document.getElementById('again').addEventListener('click', ()=>{ endDlg.close(); newGame(); });
+    document.getElementById('close').addEventListener('click', ()=> endDlg.close());
+
+    // Init
+    buildKeyboard();
+    pickWord();
+  </script>
+</body>
+</html>
